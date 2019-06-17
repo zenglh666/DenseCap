@@ -188,12 +188,14 @@ def model_graph(features, mode, params):
         tiou = tIoU(proposal, timestamps)
         
         loss = 0
-        loss_dict['eucloss'] = poposal_thresh_shoot_euclidean_loss(params, tiou, proposal, timestamps) * params.eucloss_ratio
+        loss_dict['eucloss'] = euclidean_loss(
+            params, tiou, proposal, timestamps) * params.eucloss_ratio
         loss += loss_dict['eucloss']
-        loss_dict['crossloss_plus'], loss_dict['crossloss_minus'] = porbability_thresh_shoot_softmax_crossentropy_loss(params, tiou, back_event)
+        loss_dict['crossloss_plus'], loss_dict['crossloss_minus'] = crossentropy_loss(
+            params, tiou, back_event)
         loss += loss_dict['crossloss_plus'] + loss_dict['crossloss_minus']
 
-        return loss, tf.reduce_sum(auc), tf.cast(tf.reduce_sum(timestamps_length), tf.float32), loss_dict
+        return loss, tf.reduce_sum(acc), loss_dict
 
 
 class Model(interface.NMTModel):
@@ -212,7 +214,7 @@ class Model(interface.NMTModel):
                 loss, acc_dict, loss_dict = model_graph(features, "train", params)
                 losses_dict['regloss'] = tf.losses.get_regularization_loss()
                 loss = loss + losses_dict['regloss']
-                return loss, acc_dict, tl, loss_dict
+                return loss, acc_dict, loss_dict
 
         return training_fn
 

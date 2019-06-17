@@ -125,7 +125,7 @@ def get_acc_top1_top5(params, proposal_top_k, prob_top_k, timestamps):
 
         return recall * 100
 
-def porbability_thresh_shoot_softmax_crossentropy_loss(params, tiou, back_event):
+def crossentropy_loss(params, tiou, back_event):
     with tf.variable_scope("top_k_croloss"):
         max_tiou =  tf.reduce_max(tiou, axis=2)
         shoot_mask = tf.greater(max_tiou, params.ratio)
@@ -140,7 +140,7 @@ def porbability_thresh_shoot_softmax_crossentropy_loss(params, tiou, back_event)
 
         return cross_entropy1, cross_entropy2
 
-def poposal_thresh_shoot_euclidean_loss(params, tiou, proposal, timestamps):
+def euclidean_loss(params, tiou, proposal, timestamps):
     with tf.variable_scope("top_k_eucloss"):
         max_tiou =  tf.reduce_max(tiou, axis=2)
         shoot_mask = tf.greater(max_tiou, params.ratio)

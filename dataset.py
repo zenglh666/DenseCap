@@ -50,7 +50,8 @@ class Dataset(object):
             for k in self.keys:
                 if self.labels[k]["stage"] = stage:
                     for idx in range(len(self.labels[k]["timestamps"])):
-                        used_labels.append([k, idx, self.labels[k]["duration"], self.labels[k]["timestamps"][idx], self.labels[k]["sentences"][idx]])
+                        used_labels.append([k, idx, self.labels[k]["duration"], 
+                            self.labels[k]["timestamps"][idx], self.labels[k]["sentences"][idx]])
 
             if stage == "validation":
                 self.val_label_num = len(used_labels)
