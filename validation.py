@@ -96,7 +96,8 @@ class ProposalEvaluationHook(tf.train.SessionRunHook):
             if self._timer.should_trigger_for_step(global_step):
                 self._timer.update_last_triggered_step(global_step)
                 save_path = os.path.join(self._base_dir, "model.ckpt")
-                save_path = self._training_saver.save(run_context.session, save_path, global_step=global_step)
+                save_path = self._training_saver.save(
+                    run_context.session, save_path, global_step=global_step)
                 tf.logging.info("Saving checkpoints for %d into %s." % (global_step, save_path))
                 # Do validation here
                 tf.logging.info("Validating model at step %d" % global_step)
