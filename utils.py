@@ -1,9 +1,4 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import copy
-
 import tensorflow as tf
 import numpy as np
 
@@ -22,12 +17,12 @@ def tIoU(proposal, timestamps):
 
 def get_proposal(params, inputs, inputs_size_list):
     batch_size = tf.shape(inputs)[0]
+    stream_length = tf.shape(inputs)[1]
 
     with tf.variable_scope("proposal"):
         rd = tf.constant(params.anchor)
         size_rd = rd.get_shape().as_list()[0]
-        stream_length = tf.shape(localization)[1]
-        localization = tf.nn.conv1d(inputs, size_rd * 2, kernel_size=1, padding='SAME', use_bias=False)
+        localization = tf.layers.conv1d(inputs, size_rd * 2, kernel_size=1, padding='same', use_bias=False)
         localization = tf.reshape(localization, [batch_size, stream_length, size_rd, 2])
 
         with tf.device('/cpu:0'):
@@ -41,24 +36,24 @@ def get_proposal(params, inputs, inputs_size_list):
                 miu_c = tf.reshape(miu_c, [1, size, 1])
                 miu_w_list.append(miu_w)
                 miu_c_list.append(miu_c)
-            miu_w = tf.concat(miu_w_list, aixs=1)
-            miu_c = tf.concat(miu_c_list, aixs=1)
+            miu_w = tf.concat(miu_w_list, axis=1)
+            miu_c = tf.concat(miu_c_list, axis=1)
 
-        fan_c = miu_c +  miu_w * (0.1 * localization[:, :, :, 0])
-        fan_w = miu_w * (tf.exp(0.1 * localization[:, :, :, 1]))
+        fan_c = miu_c +  miu_w * tf.tanh(0.1 * localization[:, :, :, 0])
+        fan_w = miu_w * (tf.sigmoid(0.1 * localization[:, :, :, 1]))
         t_start = tf.expand_dims(fan_c - 0.5 * fan_w, -1)
         t_end = tf.expand_dims(fan_c + 0.5 * fan_w, -1)
         proposal = tf.concat([t_start, t_end], axis=-1)
         proposal = tf.reshape(proposal, [batch_size, -1, 2])
 
     with tf.variable_scope("back_event"):
-        back_event = tf.nn.conv1d(inputs, size_rd * 2, kernel_size=1, padding='SAME', use_bias=False)
-        
-        back_event = tf.reshape(back_event, [batch_size, -1, 2])
+        back_event = tf.layers.conv1d(inputs, size_rd * 2, kernel_size=1, padding='same', use_bias=False)
+        back_event = tf.reshape(back_event, [batch_size, stream_length*size_rd, 2])
+
     return back_event, proposal
 
 def choose_top(proposal, probability):
-    top_idx = tf.math.argmax(probability, axis=1)
+    top_idx = tf.cast(tf.math.argmax(probability, axis=1), tf.int32)
     top_idx = tf.expand_dims(top_idx, 1)
     batch_id = tf.reshape(tf.range(tf.shape(probability)[0]), [-1, 1])
     top_idx = tf.concat([batch_id, top_idx], axis=-1)
@@ -76,21 +71,24 @@ def nms(probability, proposal, top_proposal_gather):
 def get_acc(params, proposal, probability, timestamps):
     with tf.variable_scope("accuracy"), tf.device('/cpu:0'):
         top_proposal = choose_top(proposal, probability)
+        top_proposal = tf.expand_dims(top_proposal, axis=1)
         top1 = tIoU(top_proposal, timestamps)
-        shoot = tf.cast(tf.greater(tiou, params.ratio), tf.float32)
+        shoot = tf.cast(tf.greater(top1, params.ratio), tf.float32)
         return shoot
 
 def get_acc_top1_top5(params, proposal, probability, timestamps):
     with tf.variable_scope("accuracy"), tf.device('/cpu:0'):
         top_proposal = choose_top(proposal, probability)
+        top_proposal = tf.expand_dims(top_proposal, axis=1)
         top1 = tIoU(top_proposal, timestamps)
         acc15 = tf.cast(tf.greater(top1, 0.5), tf.float32)
         acc17 = tf.cast(tf.greater(top1, 0.7), tf.float32)
 
-        stop = lambda _, _, top_proposal: tf.less(tf.shape(top_proposal)[1], 6)
+        stop = lambda probability, proposal, top_proposal: tf.less(tf.shape(top_proposal)[1], 6)
         _, _, top_proposal = tf.while_loop(stop, nms, 
             [probability, proposal, tf.zeros([tf.shape(proposal)[0], 1, 2])], 
-            parallel_iterations=1, back_prop=False)
+            parallel_iterations=1, back_prop=False, 
+            shape_invariants=[probability.get_shape(), proposal.get_shape(), tf.TensorShape([None, None, 2])])
         top_proposal = top_proposal[:, 1:, :]
         tiou_top5 = tIoU(top_proposal, timestamps)
         shoot = tf.cast(tf.greater(tiou_top5, 0.5), tf.float32)
@@ -104,27 +102,26 @@ def get_acc_top1_top5(params, proposal, probability, timestamps):
 
         return acc_dict
 
-def crossentropy_loss(params, proposal, timestamps, back_event):
+def class_loss(params, proposal, timestamps, back_event):
     with tf.variable_scope("croloss"):
         tiou = tIoU(proposal, timestamps)
         shoot_mask = tf.greater(tiou, params.ratio)
         back_event_shoot = tf.boolean_mask(back_event, shoot_mask)
         cross_entropy1 = tf.losses.sparse_softmax_cross_entropy(
-            logits=back_event_shoot, labels=tf.ones(tf.shape(back_event_shoot), dtype=tf.int32))
+            logits=back_event_shoot, labels=tf.ones(tf.shape(back_event_shoot)[:-1], dtype=tf.int32))
 
         shoot_mask = tf.less(tiou, (1 - params.ratio))
         back_event_shoot = tf.boolean_mask(back_event, shoot_mask)
         cross_entropy2 = tf.losses.sparse_softmax_cross_entropy(
-            logits=back_event_shoot, labels=tf.zeros(tf.shape(back_event_shoot), dtype=tf.int32))
+            logits=back_event_shoot, labels=tf.zeros(tf.shape(back_event_shoot)[:-1], dtype=tf.int32))
 
         return cross_entropy1, cross_entropy2
 
-def euclidean_loss(params, proposal, timestamps):
+def regress_loss(params, proposal, timestamps):
     with tf.variable_scope("eucloss"):
         tiou = tIoU(proposal, timestamps)
-        shoot_mask = tf.greater(tiou, params.ratio)
-        proposal_shoot = tf.boolean_mask(proposal, shoot_mask)
+        shoot_mask = tf.expand_dims(tf.greater(tiou, params.ratio), -1)
         timestamps = tf.expand_dims(timestamps, axis=1)
 
-        euclidean = tf.losses.absolute_difference(proposal_shoot, timestamps)
+        euclidean = tf.losses.absolute_difference(proposal, timestamps, weights=shoot_mask)
         return euclidean

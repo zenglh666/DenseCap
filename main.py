@@ -1,20 +1,13 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import argparse
 import os
-import six
-import sys
 import json
 import logging
-from datetime import datetime
-
 import numpy as np
 import tensorflow as tf
-from dataset import Dataset
 import models
 from validation import ProposalEvaluationHook
+from datetime import datetime
+from dataset import Dataset
 
 
 def parse_args(args=None):
@@ -43,8 +36,8 @@ def parse_args(args=None):
 def default_parameters():
     params = tf.contrib.training.HParams(
         label_file="",
-        feature_visual_file="",
-        feature_language_file = "",
+        visual_file="",
+        language_file = "",
         output="",
         model="",
         job_id = "",
@@ -57,7 +50,7 @@ def default_parameters():
         optimizer="Sgd",
         clip_grad_norm=0.,
         learning_rate_decay="exponential_decay",
-        learning_rate=1e-2,
+        learning_rate=0.1,
         train_steps=120000,
         decay_steps=40000,
         eval_steps=2000,
@@ -68,7 +61,7 @@ def default_parameters():
         initializer="uniform_unit_scaling",
         initializer_gain=1.0,
         scale_l1=0.0,
-        scale_l2=0.0,
+        scale_l2=1e-4,
         keep_checkpoint_max=1,
         keep_top_checkpoint_max=1,
         
@@ -80,7 +73,7 @@ def default_parameters():
 
         # Dataset Attribute
         word_length=64,
-        k2scale=1,
+        k2scale=0,
     )
     return params
 
@@ -145,7 +138,6 @@ def merge_parameters(params1, params2):
 
 def override_parameters(params, args):
     params.model = args.model
-    params.dataset = args.dataset
     params.output = args.output or params.output
     params.job_id = args.job_id or params.job_id
     params.parse(args.parameters)
@@ -155,10 +147,10 @@ def override_parameters(params, args):
 
     params.output = os.path.join(params.output, params.job_id)
     assert params.label_file
-    assert params.feature_visual_file
+    assert params.visual_file
+    assert params.language_file
+    params.k2scale = params.k2scale or 2 ** params.anchor_layers
     return params
-    if params.k2scale == 1:
-        params.k2scale = 2 ** params.num_decoder_layers
 
 
 def get_initializer(params):
@@ -198,6 +190,7 @@ def get_optimizer(learning_rate, params):
         opt = tf.train.GradientDescentOptimizer(learning_rate)
     else:
         raise RuntimeError("Optimizer %s not supported" % params.optimizer)
+    return opt
 
     if params.clip_grad_norm > 0.:
         opt = tf.contrib.estimator.clip_gradients_by_norm(opt, params.clip_grad_norm)
@@ -322,7 +315,7 @@ def main(args):
             ProposalEvaluationHook(
                 model,
                 dataset,
-                session_config,
+                config,
                 saver,
                 params,
             )

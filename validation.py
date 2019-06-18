@@ -1,17 +1,7 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-import argparse
 import os
-import six
 import sys
-
 import tensorflow as tf
 import numpy as np
-import json
-import dataset
-import math
 
 class ProposalEvaluationHook(tf.train.SessionRunHook):
     def __init__(self, model, dataset, session_config, training_saver, params):
@@ -53,7 +43,7 @@ class ProposalEvaluationHook(tf.train.SessionRunHook):
         validation_iteration += int(last_batch > 0)
 
         for iteration in range(validation_iteration):
-            scores_iter = self.sess.run([self.scores])
+            scores_iter = self.sess.run([self.scores])[0]
             if iteration == validation_iteration - 1 and last_batch:
                 for k in scores_iter.keys():
                     scores_iter[k] = scores_iter[k][:last_batch]
@@ -67,11 +57,12 @@ class ProposalEvaluationHook(tf.train.SessionRunHook):
 
         log_str = "Total Proposal: %d" % self.val_num
         log_str += " \nValidating ACC: "
-        for (k, v) in scores.items():
+        for (k, v) in sorted(scores.items()):
             log_str += str(k) + " - " + str(v)
         log_str += " \nMaximum ACC: "
-        for (k, v) in self._max_scores.items():
-            log_str += str(k) + " - " + str(v)
+        for (k, v) in sorted(self._max_scores.items()):
+            log_str += str(k) + " - " + str(v) + " ||||| "
+        tf.logging.info(log_str)
 
 
     def begin(self):
@@ -98,5 +89,4 @@ class ProposalEvaluationHook(tf.train.SessionRunHook):
                 tf.logging.info("Saving checkpoints for %d into %s." % (stale_global_step, save_path))
                 # Do validation here
                 tf.logging.info("Validating model at step %d" % stale_global_step)
-                self._validation_auc = self.run_eval(save_path)
-                run_context.session.run(self._assign_op)
+                self.run_eval(save_path)

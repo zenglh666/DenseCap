@@ -1,9 +1,4 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import copy
-
 import tensorflow as tf
 import interface
 from utils import *
@@ -13,20 +8,24 @@ def layer_process(x, mode):
     if not mode or mode == "none":
         return x
     elif mode == "layer_norm":
-        return tf.layers.batch_normalization(x)
+        return tf.layers.batch_normalization(x, epsilon=1e-6)
     else:
         raise ValueError("Unknown mode %s" % mode)
 
 
-def residual_fn(x, y, dropout=0.):
-    y = tf.layers.dropout(y, keep_prob)
+def residual_fn(x, y, dropout):
+    y = tf.layers.dropout(y, dropout)
     return x + y
 
+def conv_block(x, params, kernel_size, strides):
+    x = tf.layers.conv1d(x, params.hidden_size, 
+        kernel_size=kernel_size, strides=strides, padding='same', use_bias=False)
+    x = layer_process(x, params.layer_postprocess)
+    x = tf.nn.relu(x)
+    return x
 
-def MAB(inputs, memory, bias, params, scope=None):
-    with tf.variable_scope(scope, default_name="mab_"):
-        visual = inputs
-        language = memory
+def MAB(visual, language, bias, params, scope=None):
+    with tf.variable_scope(scope, default_name="mab"):
         for layer in range(params.num_mab):
             with tf.variable_scope("layer_%d" % layer):
                 x = language
@@ -47,7 +46,7 @@ def MAB(inputs, memory, bias, params, scope=None):
                     x = layer_process(x, params.layer_postprocess)
                         
                 with tf.variable_scope("feed_forward_language"):
-                    y = _ffn_layer(
+                    y = ffn_layer(
                         layer_process(x, params.layer_preprocess),
                         params.filter_size,
                         params.hidden_size,
@@ -76,7 +75,7 @@ def MAB(inputs, memory, bias, params, scope=None):
                     x = layer_process(x, params.layer_postprocess)
 
                 with tf.variable_scope("feed_forward_visual"):
-                    y = _ffn_layer(
+                    y = ffn_layer(
                         layer_process(x, params.layer_preprocess),
                         params.filter_size,
                         params.hidden_size,
@@ -87,23 +86,6 @@ def MAB(inputs, memory, bias, params, scope=None):
 
                 visual = x
         return x
-
-def encoding_graph(src_seq, src_len, params):
-    hidden_size = params.hidden_size
-    src_mask = tf.sequence_mask(
-        src_len, maxlen=tf.shape(src_seq)[1], dtype=tf.float32)
-    
-    encoder_input = attention.add_timing_signal(src_seq)
-    enc_attn_bias = attention.attention_bias(src_mask, "masking")
-
-    if params.num_mab > 0:
-        encoder_output = transformer_encoder(encoder_input, enc_attn_bias, params)
-        encoder_output = encoder_output * tf.expand_dims(src_mask, -1)
-    else:
-        encoder_output = tf.layers.conv1d(encoder_output, params.hidden_size, 
-            kernel_size=1, strides=1, padding='same', use_bias=True)
-
-    return encoder_output, enc_attn_bias
 
 
 def model_graph(features, mode, params):
@@ -125,7 +107,13 @@ def model_graph(features, mode, params):
         feature_language = feature_language * tf.cast(feature_mask, tf.float32)
 
     with tf.variable_scope("word_embedding"):
-        feature_language, enc_attn_bias = encoding_graph(feature_language, language_length, params)
+        src_mask = tf.sequence_mask(
+            language_length, maxlen=tf.shape(feature_language)[1], dtype=tf.float32)
+        feature_language = conv_block(feature_language, params, kernel_size=1, strides=1)
+        feature_language = tf.layers.dropout(feature_language, params.relu_dropout)
+        feature_language = feature_language * tf.expand_dims(src_mask, -1)
+        feature_language = add_timing_signal(feature_language)
+        enc_attn_bias = attention_bias(src_mask, "masking")
 
     with tf.variable_scope("visual_embedding"):
         feature_visual = add_timing_signal(feature_visual)
@@ -135,28 +123,25 @@ def model_graph(features, mode, params):
         for layer_id in range(params.anchor_layers):
             with tf.variable_scope("layer_%d" % layer_id):
                 with tf.variable_scope("input_feed_forward"):
-                    x = tf.layers.conv1d(x, params.hidden_size, 
-                        kernel_size=3, strides=2, padding='same', use_bias=False)
-                    x = layer_process(y, params.layer_postprocess)
-                    x = tf.nn.relu(x)
-                    x = tf.layers.dropout(x, relu_dropout)
+                    x = conv_block(x, params, kernel_size=3, strides=2)
+                    x = tf.layers.dropout(x, params.relu_dropout)
                     outputs_d_list.append(x)
                     outputs_d_size_list.append(tf.shape(x)[1])
 
     with tf.variable_scope("proposal"):
         output_d = tf.concat(outputs_d_list, axis=1)
 
-        if params.skip_word:
+        if params.num_mab < 1:
             memories = tf.reduce_mean(feature_language, axis=1, keepdims=True)
-            memories_tile = tf.tile(memories, [1, tf.shape(x)[1], 1])
             x = output_d
+            memories_tile = tf.tile(memories, [1, tf.shape(x)[1], 1])
             x = tf.concat([x, memories_tile], axis=-1)
             x = tf.layers.conv1d(
                 x, params.hidden_size, kernel_size=1, strides=1, padding='same', use_bias=True)
             x = tf.nn.relu(x)
             output = x
         else:
-            output = transformer_decoder(output_d, feature_language, enc_attn_bias, params)
+            output = MAB(output_d, feature_language, enc_attn_bias, params)
 
         back_event, proposal = get_proposal(params, output, outputs_d_size_list)
 
@@ -174,19 +159,19 @@ def model_graph(features, mode, params):
     with tf.variable_scope("loss"):
         acc = get_acc(params, proposal, probability, timestamps)
         loss_dict = {}
-        loss_dict['eucloss'] = euclidean_loss(
+        loss_dict['eucloss'] = regress_loss(
             params, proposal, timestamps) * params.eucloss_ratio
         loss = loss_dict['eucloss']
-        loss_dict['crossloss_plus'], loss_dict['crossloss_minus'] = crossentropy_loss(
+        loss_dict['crossloss_plus'], loss_dict['crossloss_minus'] = class_loss(
             params, proposal, timestamps, back_event)
         loss += loss_dict['crossloss_plus'] + loss_dict['crossloss_minus']
 
-        return loss, tf.reduce_sum(acc), loss_dict
+        return loss, tf.reduce_mean(acc), loss_dict
 
 
 class Model(interface.NMTModel):
 
-    def __init__(self, params, scope="fff"):
+    def __init__(self, params, scope="Model"):
         super(Model, self).__init__(params=params, scope=scope)
 
     def get_training_func(self, initializer, regularizer=None):
@@ -197,10 +182,10 @@ class Model(interface.NMTModel):
                 params = copy.copy(params)
             with tf.variable_scope(self._scope, initializer=initializer,
                                    regularizer=regularizer, reuse=reuse):
-                loss, acc_dict, loss_dict = model_graph(features, "train", params)
-                losses_dict['regloss'] = tf.losses.get_regularization_loss()
-                loss = loss + losses_dict['regloss']
-                return loss, acc_dict, loss_dict
+                loss, acc, loss_dict = model_graph(features, "train", params)
+                loss_dict['regloss'] = tf.losses.get_regularization_loss()
+                loss = loss + loss_dict['regloss']
+                return loss, acc, loss_dict
 
         return training_fn
 
@@ -243,17 +228,15 @@ class Model(interface.NMTModel):
             language_size=1024,
             visual_size=500,
             anchor_layers=10,
-            start_layer=0,
-            end_layer=10,
             anchor=[1., 1.25, 1.5],
             hidden_size=256,
             filter_size=512,
             num_heads=8,
-            num_mab=3,
+            num_mab=0,
             # regularization
             ratio=0.5,
-            feature_dropout=0.0,
-            label_dropout=0.0,
+            feature_dropout=0.1,
+            label_dropout=0.1,
             eucloss_ratio=10.,
             attention_dropout=0.1,
             residual_dropout=0.1,
