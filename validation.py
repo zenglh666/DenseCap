@@ -37,7 +37,7 @@ class ProposalEvaluationHook(tf.train.SessionRunHook):
                 self._max_scores[k] = 0.
 
             sess_creator = tf.train.ChiefSessionCreator(
-                config=self._session_config
+                config=session_config
             )
             self.saver = tf.train.Saver()
             self.sess = tf.train.MonitoredSession(session_creator=sess_creator)
@@ -87,19 +87,16 @@ class ProposalEvaluationHook(tf.train.SessionRunHook):
         return args
 
     def after_run(self, run_context, run_values):
-        stale_global_step = run_values.results
-
-        if self._timer.should_trigger_for_step(stale_global_step + 1):
-            global_step = run_context.session.run(self._global_step)
-
+        stale_global_step = run_values.results + 1
+        if self._timer.should_trigger_for_step(stale_global_step):
             # Get the real value
-            if self._timer.should_trigger_for_step(global_step):
-                self._timer.update_last_triggered_step(global_step)
+            if self._timer.should_trigger_for_step(stale_global_step):
+                self._timer.update_last_triggered_step(stale_global_step)
                 save_path = os.path.join(self._base_dir, "model.ckpt")
                 save_path = self._training_saver.save(
-                    run_context.session, save_path, global_step=global_step)
-                tf.logging.info("Saving checkpoints for %d into %s." % (global_step, save_path))
+                    run_context.session, save_path, global_step=stale_global_step)
+                tf.logging.info("Saving checkpoints for %d into %s." % (stale_global_step, save_path))
                 # Do validation here
-                tf.logging.info("Validating model at step %d" % global_step)
+                tf.logging.info("Validating model at step %d" % stale_global_step)
                 self._validation_auc = self.run_eval(save_path)
                 run_context.session.run(self._assign_op)

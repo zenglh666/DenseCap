@@ -32,7 +32,7 @@ def MAB(inputs, memory, bias, params, scope=None):
                 x = language
 
                 with tf.variable_scope("self_attention_language"):
-                    y = attention.multihead_attention(
+                    y = multihead_attention(
                         layer_process(x, params.layer_preprocess),
                         None,
                         bias,
@@ -61,7 +61,7 @@ def MAB(inputs, memory, bias, params, scope=None):
                 x = visual
                 
                 with tf.variable_scope("multi_attention_visual"):
-                    y = attention.multihead_attention(
+                    y = multihead_attention(
                         layer_process(x, params.layer_preprocess),
                         language,
                         bias,
@@ -108,16 +108,9 @@ def encoding_graph(src_seq, src_len, params):
 
 def model_graph(features, mode, params):
     feature_visual = features["feature_visual"]
-    feature_visual = tf.reshape(feature_visual, 
-        [tf.shape(feature_visual)[0], tf.shape(feature_visual)[1], params.visual_size])
-
     feature_language = features["feature_language"]
-    feature_language = tf.reshape(feature_language, 
-        [tf.shape(feature_language)[0], tf.shape(feature_language)[1], params.language_size])
-
     timestamps = features["timestamps"]
     duration = features['duration']
-    
     language_length = features["language_length"]
 
     if params.feature_dropout:
@@ -136,25 +129,22 @@ def model_graph(features, mode, params):
 
     with tf.variable_scope("visual_embedding"):
         feature_visual = add_timing_signal(feature_visual)
-        foward = feature_visual
+        x = feature_visual
         outputs_d_list = []
         outputs_d_size_list = []
         for layer_id in range(params.anchor_layers):
             with tf.variable_scope("layer_%d" % layer_id):
                 with tf.variable_scope("input_feed_forward"):
-                    x = foward
                     x = tf.layers.conv1d(x, params.hidden_size, 
                         kernel_size=3, strides=2, padding='same', use_bias=False)
                     x = layer_process(y, params.layer_postprocess)
                     x = tf.nn.relu(x)
                     x = tf.layers.dropout(x, relu_dropout)
-                    foward = x
                     outputs_d_list.append(x)
                     outputs_d_size_list.append(tf.shape(x)[1])
 
     with tf.variable_scope("proposal"):
         output_d = tf.concat(outputs_d_list, axis=1)
-        outputs_d_size = tf.concat(outputs_d_size_list)
 
         if params.skip_word:
             memories = tf.reduce_mean(feature_language, axis=1, keepdims=True)
@@ -168,10 +158,9 @@ def model_graph(features, mode, params):
         else:
             output = transformer_decoder(output_d, feature_language, enc_attn_bias, params)
 
-        outputs_list = tf.split(output, outputs_d_size, axis=1)
-        back_event, proposal = get_proposal(params, outputs_list)
+        back_event, proposal = get_proposal(params, output, outputs_d_size_list)
 
-    timestamps = timestamps / tf.reshape(duration, [-1, 1, 1])
+    timestamps = timestamps / tf.reshape(duration, [-1, 1])
     probability = tf.nn.softmax(back_event)[:, :, 1]
 
     if mode == "infer":
@@ -182,17 +171,14 @@ def model_graph(features, mode, params):
         acc = get_acc_top1_top5(params, proposal, probability, timestamps)
         return acc
 
-    acc = get_acc(params, proposal, timestamps)
     with tf.variable_scope("loss"):
+        acc = get_acc(params, proposal, probability, timestamps)
         loss_dict = {}
-        tiou = tIoU(proposal, timestamps)
-        
-        loss = 0
         loss_dict['eucloss'] = euclidean_loss(
-            params, tiou, proposal, timestamps) * params.eucloss_ratio
-        loss += loss_dict['eucloss']
+            params, proposal, timestamps) * params.eucloss_ratio
+        loss = loss_dict['eucloss']
         loss_dict['crossloss_plus'], loss_dict['crossloss_minus'] = crossentropy_loss(
-            params, tiou, back_event)
+            params, proposal, timestamps, back_event)
         loss += loss_dict['crossloss_plus'] + loss_dict['crossloss_minus']
 
         return loss, tf.reduce_sum(acc), loss_dict

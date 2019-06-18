@@ -9,10 +9,10 @@ import numpy as np
 
 def tIoU(proposal, timestamps):
     with tf.variable_scope("tiou"):
-        proposal_start = tf.expand_dims(proposal, -1)[:, :, 0, :]
-        proposal_end = tf.expand_dims(proposal, -1)[:, :, 1, :]
-        timestamps_start = tf.expand_dims(timestamps, 1)[:, :, :, 0]
-        timestamps_end = tf.expand_dims(timestamps, 1)[:, :, :, 1]
+        proposal_start = proposal[:, :, 0]
+        proposal_end = proposal[:, :, 1]
+        timestamps_start = tf.expand_dims(timestamps[:, 0], -1)
+        timestamps_end = tf.expand_dims(timestamps[:, 1], -1)
         intersection = tf.maximum(
             0., tf.minimum(proposal_end, timestamps_end) - tf.maximum(proposal_start, timestamps_start))
         union = proposal_end - proposal_start + timestamps_end - timestamps_start - intersection
@@ -20,100 +20,79 @@ def tIoU(proposal, timestamps):
         
         return tiou
 
-def get_proposal(params, outputs_list):
+def get_proposal(params, inputs, inputs_size_list):
+    batch_size = tf.shape(inputs)[0]
+
     with tf.variable_scope("proposal"):
         rd = tf.constant(params.anchor)
         size_rd = rd.get_shape().as_list()[0]
-        proposal_list = []
-        back_event_list = []
+        stream_length = tf.shape(localization)[1]
+        localization = tf.nn.conv1d(inputs, size_rd * 2, kernel_size=1, padding='SAME', use_bias=False)
+        localization = tf.reshape(localization, [batch_size, stream_length, size_rd, 2])
 
-        var_l = tf.get_variable(shape=[1, params.hidden_size, size_rd * 2], 
-            name="localization", regularizer=params.regularizer)
-        var_b = tf.get_variable(shape=[1, params.hidden_size, size_rd * 2], 
-            name="back_event", regularizer=params.regularizer)
+        with tf.device('/cpu:0'):
+            miu_w_list = []
+            miu_c_list = []
+            for size in inputs_size_list:
+                miu_w = rd / tf.cast(size, tf.float32)
+                miu_c = (tf.cast(tf.range(size), tf.float32) + 0.5)/ tf.cast(size, tf.float32)
+                miu_w = tf.reshape(miu_w, [1, 1, size_rd])
+                miu_w = tf.tile(miu_w, [1, size, 1])
+                miu_c = tf.reshape(miu_c, [1, size, 1])
+                miu_w_list.append(miu_w)
+                miu_c_list.append(miu_c)
+            miu_w = tf.concat(miu_w_list, aixs=1)
+            miu_c = tf.concat(miu_c_list, aixs=1)
 
-        for layer_id in range(params.start_layer, params.end_layer):
-            outputs = outputs_list[layer_id]
+        fan_c = miu_c +  miu_w * (0.1 * localization[:, :, :, 0])
+        fan_w = miu_w * (tf.exp(0.1 * localization[:, :, :, 1]))
+        t_start = tf.expand_dims(fan_c - 0.5 * fan_w, -1)
+        t_end = tf.expand_dims(fan_c + 0.5 * fan_w, -1)
+        proposal = tf.concat([t_start, t_end], axis=-1)
+        proposal = tf.reshape(proposal, [batch_size, -1, 2])
 
-            localization = tf.nn.conv1d(outputs, var_l, stride=1, padding='SAME')
-            stream_length = tf.shape(localization)[1]
-            batch_size = tf.shape(localization)[0]
-            localization = tf.reshape(localization, [batch_size, stream_length, size_rd, 2])
-
-            miu_w = rd / tf.cast(stream_length, tf.float32)
-            miu_c = (tf.cast(tf.range(stream_length), tf.float32) + 0.5)/ tf.cast(stream_length, tf.float32)
-            miu_w = tf.reshape(miu_w, [1, 1, -1])
-            miu_c = tf.reshape(miu_c, [1, -1, 1])
-            fan_c = miu_c +  miu_w * (0.1 * localization[:, :, :, 0])
-            fan_w = miu_w * (tf.exp(0.1 * localization[:, :, :, 1]))
-            t_start = tf.expand_dims(fan_c - 0.5 * fan_w, -1)
-            t_end = tf.expand_dims(fan_c + 0.5 * fan_w, -1)
-            proposal = tf.concat([t_start, t_end], axis=-1)
-            proposal = tf.reshape(proposal, [batch_size, -1, 2])
-            proposal_list.append(proposal)
-
-            back_event = tf.nn.conv1d(outputs, var_b, stride=1, padding='SAME')
-            back_event = tf.reshape(back_event, [batch_size, -1, 2])
-            back_event_list.append(back_event)
-        back_event = tf.concat(back_event_list, axis=1)
-        proposal = tf.concat(proposal_list, axis=1)
-        return back_event, proposal
-
-
-def get_acc(params, proposal_top_k, timestamps):
-    with tf.variable_scope("recall"), tf.device('/cpu:0'):
-        tiou = tIoU(proposal_top_k, timestamps)
-        shoot = tf.cast(tf.greater(tiou, params.ratio), tf.float32)
-        shoot_i = shoot[:, :1, :]
-        tiou_k = tf.reduce_max(shoot_i, axis=1)
-        acc = tf.reduce_sum(tiou_k, axis=1)
-        return acc * 100
-
-def tiou_pyfunc(proposal, timestamps):
-    proposal_start = np.expand_dims(proposal, -1)[:, :, 0, :]
-    proposal_end = np.expand_dims(proposal, -1)[:, :, 1, :]
-    timestamps_start = np.expand_dims(timestamps, 1)[:, :, :, 0]
-    timestamps_end = np.expand_dims(timestamps, 1)[:, :, :, 1]
-    intersection = np.maximum(
-        0., np.minimum(proposal_end, timestamps_end) - np.maximum(proposal_start, timestamps_start))
-    union = proposal_end - proposal_start + timestamps_end - timestamps_start - intersection
-    tiou = intersection / (union + 1e-8)
+    with tf.variable_scope("back_event"):
+        back_event = tf.nn.conv1d(inputs, size_rd * 2, kernel_size=1, padding='SAME', use_bias=False)
         
-    return tiou
+        back_event = tf.reshape(back_event, [batch_size, -1, 2])
+    return back_event, proposal
 
-def generate_top5(proposal_top_k, prob_top_k):
-    top_proposal_list = []
-    for i in range(5):
-        top_idx = np.argmax(prob_top_k, axis=1)
-        top_proposal = []
-        for j in range(top_idx.size):
-            top_proposal.append(np.expand_dims(proposal_top_k[j, top_idx[j], :], 0))
-            prob_top_k[j,top_idx[j]] = -1
-        top_proposal = np.expand_dims(np.concatenate(top_proposal, axis=0), 1)
-        top_proposal_list.append(top_proposal)
-        tiou = tiou_pyfunc(top_proposal, proposal_top_k)[:,0,:]
-        prob_top_k = prob_top_k * (tiou < 0.5).astype(np.float32)
-    output = np.concatenate(top_proposal_list, axis=1)
-    return output
+def choose_top(proposal, probability):
+    top_idx = tf.math.argmax(probability, axis=1)
+    top_idx = tf.expand_dims(top_idx, 1)
+    batch_id = tf.reshape(tf.range(tf.shape(probability)[0]), [-1, 1])
+    top_idx = tf.concat([batch_id, top_idx], axis=-1)
+    top_proposal = tf.gather_nd(proposal, top_idx)
+    return top_proposal
 
-def get_acc_top1_top5(params, proposal_top_k, prob_top_k, timestamps):
-    with tf.variable_scope("recall"), tf.device('/cpu:0'):
+def nms(probability, proposal, top_proposal_gather):
+    top_proposal = choose_top(proposal, probability)
+    tiou_prop_top = tIoU(proposal, top_proposal)
+    top_proposal = tf.expand_dims(top_proposal, axis=1)
+    probability = probability * tf.cast(tf.less(tiou_prop_top, 0.5), tf.float32)
+    top_proposal_gather = tf.concat([top_proposal_gather, top_proposal], axis=1)
+    return probability, proposal, top_proposal_gather
 
-        tiou = tIoU(proposal_top_k, timestamps)
-        shoot = tf.cast(tf.greater(tiou, 0.5), tf.float32)
-        shoot = shoot[:, :1, :]
-        acc15 = tf.reduce_max(shoot, axis=1)
+def get_acc(params, proposal, probability, timestamps):
+    with tf.variable_scope("accuracy"), tf.device('/cpu:0'):
+        top_proposal = choose_top(proposal, probability)
+        top1 = tIoU(top_proposal, timestamps)
+        shoot = tf.cast(tf.greater(tiou, params.ratio), tf.float32)
+        return shoot
 
-        shoot = tf.cast(tf.greater(tiou, 0.7), tf.float32)
-        shoot = shoot[:, :1, :]
-        acc17 = tf.reduce_max(shoot, axis=1)
+def get_acc_top1_top5(params, proposal, probability, timestamps):
+    with tf.variable_scope("accuracy"), tf.device('/cpu:0'):
+        top_proposal = choose_top(proposal, probability)
+        top1 = tIoU(top_proposal, timestamps)
+        acc15 = tf.cast(tf.greater(top1, 0.5), tf.float32)
+        acc17 = tf.cast(tf.greater(top1, 0.7), tf.float32)
 
-        top_5 = tf.py_func(
-            generate_top5,
-            [proposal_top_k, prob_top_k],
-            [tf.float32]
-        )[0]
-        tiou_top5 = tIoU(top_5, timestamps)
+        stop = lambda _, _, top_proposal: tf.less(tf.shape(top_proposal)[1], 6)
+        _, _, top_proposal = tf.while_loop(stop, nms, 
+            [probability, proposal, tf.zeros([tf.shape(proposal)[0], 1, 2])], 
+            parallel_iterations=1, back_prop=False)
+        top_proposal = top_proposal[:, 1:, :]
+        tiou_top5 = tIoU(top_proposal, timestamps)
         shoot = tf.cast(tf.greater(tiou_top5, 0.5), tf.float32)
         acc55 = tf.reduce_max(shoot, axis=1)
 
@@ -123,34 +102,29 @@ def get_acc_top1_top5(params, proposal_top_k, prob_top_k, timestamps):
         acc_dict = {"acc_R1_t0.5":acc15, "acc_R1_t0.7":acc17, 
             "acc_R5_t0.5":acc55, "acc_R5_t0.7":acc57}
 
-        return recall * 100
+        return acc_dict
 
-def crossentropy_loss(params, tiou, back_event):
-    with tf.variable_scope("top_k_croloss"):
-        max_tiou =  tf.reduce_max(tiou, axis=2)
-        shoot_mask = tf.greater(max_tiou, params.ratio)
-        back_event_shoot = tf.expand_dims(tf.boolean_mask(back_event, shoot_mask), 0)
+def crossentropy_loss(params, proposal, timestamps, back_event):
+    with tf.variable_scope("croloss"):
+        tiou = tIoU(proposal, timestamps)
+        shoot_mask = tf.greater(tiou, params.ratio)
+        back_event_shoot = tf.boolean_mask(back_event, shoot_mask)
         cross_entropy1 = tf.losses.sparse_softmax_cross_entropy(
-            logits=back_event_shoot, labels=tf.ones(tf.shape(back_event_shoot)[:-1], dtype=tf.int32))
+            logits=back_event_shoot, labels=tf.ones(tf.shape(back_event_shoot), dtype=tf.int32))
 
-        shoot_mask = tf.less(max_tiou, (1 - params.ratio))
-        back_event_shoot = tf.expand_dims(tf.boolean_mask(back_event, shoot_mask), 0)
+        shoot_mask = tf.less(tiou, (1 - params.ratio))
+        back_event_shoot = tf.boolean_mask(back_event, shoot_mask)
         cross_entropy2 = tf.losses.sparse_softmax_cross_entropy(
-            logits=back_event_shoot, labels=tf.zeros(tf.shape(back_event_shoot)[:-1], dtype=tf.int32))
+            logits=back_event_shoot, labels=tf.zeros(tf.shape(back_event_shoot), dtype=tf.int32))
 
         return cross_entropy1, cross_entropy2
 
-def euclidean_loss(params, tiou, proposal, timestamps):
-    with tf.variable_scope("top_k_eucloss"):
-        max_tiou =  tf.reduce_max(tiou, axis=2)
-        shoot_mask = tf.greater(max_tiou, params.ratio)
-        proposal_shoot = tf.expand_dims(tf.boolean_mask(proposal, shoot_mask), 0)
+def euclidean_loss(params, proposal, timestamps):
+    with tf.variable_scope("eucloss"):
+        tiou = tIoU(proposal, timestamps)
+        shoot_mask = tf.greater(tiou, params.ratio)
+        proposal_shoot = tf.boolean_mask(proposal, shoot_mask)
+        timestamps = tf.expand_dims(timestamps, axis=1)
 
-        timestamps_shoot_id = tf.argmax(tiou, axis=2, output_type=tf.int32)
-        batch_id = tf.tile(tf.reshape(tf.range(params.batch_size), [-1, 1, 1]), [1, tf.shape(timestamps_shoot_id)[1], 1])
-        timestamps_shoot_id = tf.concat([batch_id, tf.expand_dims(timestamps_shoot_id, -1)], axis=-1)
-        proposal_shoot_gd = tf.gather_nd(timestamps, timestamps_shoot_id)
-        proposal_shoot_gd = tf.expand_dims(tf.boolean_mask(proposal_shoot_gd, shoot_mask), 0)
-
-        euclidean = tf.losses.absolute_difference(proposal_shoot, proposal_shoot_gd)
+        euclidean = tf.losses.absolute_difference(proposal_shoot, timestamps)
         return euclidean

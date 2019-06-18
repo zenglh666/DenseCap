@@ -62,7 +62,6 @@ def default_parameters():
         decay_steps=40000,
         eval_steps=2000,
         log_steps=100,
-        save_steps=0,
         eval_secs=0,
         
         # Initializer and Regularizer 
@@ -245,99 +244,99 @@ def main(args):
     config = session_config(params)
     model = model_cls(params)
 
-    # Build Graph
-    features = dataset.get_train_eval_input("train")
+    with tf.Graph().as_default():
+        # Build Graph
+        features = dataset.get_train_eval_input("train")
 
-    # Build model
-    initializer = get_initializer(params)
-    regularizer = tf.contrib.layers.l1_l2_regularizer(
-        scale_l1=params.scale_l1, scale_l2=params.scale_l2)
-    
-    # Create global step
-    global_step = tf.train.get_or_create_global_step()
+        # Build model
+        initializer = get_initializer(params)
+        regularizer = tf.contrib.layers.l1_l2_regularizer(
+            scale_l1=params.scale_l1, scale_l2=params.scale_l2)
+        
+        # Create global step
+        global_step = tf.train.get_or_create_global_step()
 
-    # Create optimizer
-    learning_rate = get_learning_rate_decay(params.learning_rate, global_step, params)
-    tf.summary.scalar("learning_rate", learning_rate)
-    opt = get_optimizer(learning_rate, params)
+        # Create optimizer
+        learning_rate = get_learning_rate_decay(params.learning_rate, global_step, params)
+        tf.summary.scalar("learning_rate", learning_rate)
+        opt = get_optimizer(learning_rate, params)
 
-    # Get train loss
-    with tf.device('/gpu:%d' % params.gpu):
-        loss_func = model.get_training_func(initializer, regularizer)
-        loss, metric, losses_dict = loss_func(features, params)
-        log_values = [loss] + [v for v in losses_dict.values()] + [metric]
-        ops = opt.minimize(loss, global_step)
+        # Get train loss
+        with tf.device('/gpu:%d' % params.gpu):
+            loss_func = model.get_training_func(initializer, regularizer)
+            loss, metric, losses_dict = loss_func(features, params)
+            log_values = [loss] + [v for v in losses_dict.values()] + [metric]
+            ops = opt.minimize(loss, global_step)
 
-    losses_collect = tf.losses.get_losses()
+        losses_collect = tf.losses.get_losses()
 
-    ema = tf.train.ExponentialMovingAverage(0.997, global_step, name='average')
-    ema_op = ema.apply(log_values)
-    tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, ema_op)
+        ema = tf.train.ExponentialMovingAverage(0.997, global_step, name='average')
+        ema_op = ema.apply(log_values)
+        tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, ema_op)
 
-    loss_avg = ema.average(loss)
-    losses_dict_avg = {}
-    for k, v in losses_dict.items():
-        losses_dict_avg[k] = ema.average(v)
-    metric_avg = ema.average(metric)
+        loss_avg = ema.average(loss)
+        losses_dict_avg = {}
+        for k, v in losses_dict.items():
+            losses_dict_avg[k] = ema.average(v)
+        metric_avg = ema.average(metric)
 
-    updates_collection = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        updates_collection = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
 
-    with tf.control_dependencies([ops]):
-        ops = tf.group(*updates_collection)
+        with tf.control_dependencies([ops]):
+            ops = tf.group(*updates_collection)
 
-    # Print parameters
-    all_weights = {v.name: v for v in tf.trainable_variables()}
-    total_size = 0
+        # Print parameters
+        all_weights = {v.name: v for v in tf.trainable_variables()}
+        total_size = 0
 
-    for v_name in sorted(list(all_weights)):
-        v = all_weights[v_name]
-        tf.logging.info("%s\tshape    %s", v.name[:-2].ljust(80),
-                        str(v.shape).ljust(20))
-        v_size = np.prod(np.array(v.shape.as_list())).tolist()
-        total_size += v_size
-    tf.logging.info("Total trainable variables size: %d", total_size)
+        for v_name in sorted(list(all_weights)):
+            v = all_weights[v_name]
+            tf.logging.info("%s\tshape    %s", v.name[:-2].ljust(80),
+                            str(v.shape).ljust(20))
+            v_size = np.prod(np.array(v.shape.as_list())).tolist()
+            total_size += v_size
+        tf.logging.info("Total trainable variables size: %d", total_size)
 
 
-    logging_dict = {
-        "step": global_step,
-        "loss": loss_avg,
-        "train_metric": metric_avg
-    }
-    logging_dict.update(losses_dict_avg)
+        logging_dict = {
+            "step": global_step,
+            "loss": loss_avg,
+            "train_metric": metric_avg
+        }
+        logging_dict.update(losses_dict_avg)
 
-    for k,v in logging_dict.items():
-        if len(v.get_shape().as_list()) == 0:
-            print("Summary %s as %s" % (v.op.name, k))
-            tf.summary.scalar(k, v)
+        for k,v in logging_dict.items():
+            if len(v.get_shape().as_list()) == 0:
+                print("Summary %s as %s" % (v.op.name, k))
+                tf.summary.scalar(k, v)
 
-    # Add hooks
-    saver = tf.train.Saver()
-    train_hooks = [
-        tf.train.StopAtStepHook(last_step=params.train_steps),
-        tf.train.NanTensorHook(loss),
-        tf.train.LoggingTensorHook(
-            logging_dict,
-            every_n_iter=params.log_steps
-        ),
-        ProposalEvaluationHook(
-            model,
-            dataset,
-            session_config,
-            saver,
-            params,
-        )
-    ]
+        # Add hooks
+        saver = tf.train.Saver()
+        train_hooks = [
+            tf.train.StopAtStepHook(last_step=params.train_steps),
+            tf.train.NanTensorHook(loss),
+            tf.train.LoggingTensorHook(
+                logging_dict,
+                every_n_iter=params.log_steps
+            ),
+            ProposalEvaluationHook(
+                model,
+                dataset,
+                session_config,
+                saver,
+                params,
+            )
+        ]
 
-    # Create session, do not use default CheckpointSaverHook
-    with tf.train.MonitoredTrainingSession(
-            checkpoint_dir=params.output, hooks=train_hooks,
-            save_checkpoint_secs=None, 
-            save_checkpoint_steps=params.save_steps if params.save_steps else None, 
-            save_summaries_secs=None, save_summaries_steps=None,
-            config=config) as sess:
+        # Create session, do not use default CheckpointSaverHook
+        with tf.train.MonitoredTrainingSession(
+                checkpoint_dir=params.output, hooks=train_hooks,
+                save_checkpoint_secs=None, save_checkpoint_steps=None, 
+                save_summaries_secs=None, save_summaries_steps=None,
+                config=config) as sess:
 
-        while not sess.should_stop():
-            sess.run(ops)
+            while not sess.should_stop():
+                sess.run(ops)
 
 if __name__ == "__main__":
     main(parse_args())
