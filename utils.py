@@ -13,7 +13,7 @@ def tIoU(proposal, timestamps):
         union = proposal_end - proposal_start + timestamps_end - timestamps_start - intersection
         tiou = intersection / (union + 1e-8)
         
-        return tiou
+        return tf.stop_gradient(tiou)
 
 def get_proposal(params, inputs, inputs_size_list):
     batch_size = tf.shape(inputs)[0]
@@ -44,7 +44,7 @@ def get_proposal(params, inputs, inputs_size_list):
         t_start = tf.expand_dims(fan_c - 0.5 * fan_w, -1)
         t_end = tf.expand_dims(fan_c + 0.5 * fan_w, -1)
         proposal = tf.concat([t_start, t_end], axis=-1)
-        proposal = tf.reshape(proposal, [batch_size, -1, 2])
+        proposal = tf.reshape(proposal, [batch_size, stream_length*size_rd, 2])
 
     with tf.variable_scope("back_event"):
         back_event = tf.layers.conv1d(inputs, size_rd * 2, kernel_size=1, padding='same', use_bias=False)

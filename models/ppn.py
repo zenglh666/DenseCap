@@ -8,7 +8,7 @@ def layer_process(x, mode):
     if not mode or mode == "none":
         return x
     elif mode == "layer_norm":
-        return tf.layers.batch_normalization(x, epsilon=1e-6)
+        return layer_norm(x)
     else:
         raise ValueError("Unknown mode %s" % mode)
 
@@ -98,12 +98,12 @@ def model_graph(features, mode, params):
     if params.feature_dropout:
         keep_prob = 1.0 - params.feature_dropout
         distribution = tf.distributions.Bernoulli(probs=keep_prob)
-        feature_mask = tf.expand_dims(distribution.sample(tf.shape(feature_visual)[:2]), axis=-1)
+        feature_mask = tf.expand_dims(distribution.sample(tf.shape(feature_visual)[:-1]), axis=-1)
         feature_visual = feature_visual * tf.cast(feature_mask, tf.float32)
     if params.label_dropout:
         keep_prob = 1.0 - params.label_dropout
         distribution = tf.distributions.Bernoulli(probs=keep_prob)
-        feature_mask = tf.expand_dims(distribution.sample(tf.shape(feature_language)[:2]), axis=-1)
+        feature_mask = tf.expand_dims(distribution.sample(tf.shape(feature_language)[:-1]), axis=-1)
         feature_language = feature_language * tf.cast(feature_mask, tf.float32)
 
     with tf.variable_scope("word_embedding"):
@@ -111,19 +111,25 @@ def model_graph(features, mode, params):
             language_length, maxlen=tf.shape(feature_language)[1], dtype=tf.float32)
         feature_language = conv_block(feature_language, params, kernel_size=1, strides=1)
         feature_language = tf.layers.dropout(feature_language, params.relu_dropout)
-        feature_language = feature_language * tf.expand_dims(src_mask, -1)
         feature_language = add_timing_signal(feature_language)
         enc_attn_bias = attention_bias(src_mask, "masking")
+        feature_language = feature_language * tf.expand_dims(src_mask, -1)
 
     with tf.variable_scope("visual_embedding"):
+        feature_visual = conv_block(feature_visual, params, kernel_size=1, strides=1)
+        feature_visual = tf.layers.dropout(feature_visual, params.relu_dropout)
         feature_visual = add_timing_signal(feature_visual)
-        x = feature_visual
         outputs_d_list = []
         outputs_d_size_list = []
+        forward = x = feature_visual
         for layer_id in range(params.anchor_layers):
             with tf.variable_scope("layer_%d" % layer_id):
                 with tf.variable_scope("input_feed_forward"):
+                    x = forward 
                     x = conv_block(x, params, kernel_size=3, strides=2)
+                    x = tf.layers.dropout(x, params.relu_dropout)
+                    forward = x
+                    x = conv_block(x, params, kernel_size=3, strides=1)
                     x = tf.layers.dropout(x, params.relu_dropout)
                     outputs_d_list.append(x)
                     outputs_d_size_list.append(tf.shape(x)[1])
@@ -132,21 +138,19 @@ def model_graph(features, mode, params):
         output_d = tf.concat(outputs_d_list, axis=1)
 
         if params.num_mab < 1:
-            memories = tf.reduce_mean(feature_language, axis=1, keepdims=True)
             x = output_d
+            memories = tf.reduce_mean(feature_language, axis=1, keepdims=True)
             memories_tile = tf.tile(memories, [1, tf.shape(x)[1], 1])
             x = tf.concat([x, memories_tile], axis=-1)
-            x = tf.layers.conv1d(
-                x, params.hidden_size, kernel_size=1, strides=1, padding='same', use_bias=True)
-            x = tf.nn.relu(x)
+            x = conv_block(x, params, kernel_size=1, strides=1)
             output = x
         else:
             output = MAB(output_d, feature_language, enc_attn_bias, params)
 
         back_event, proposal = get_proposal(params, output, outputs_d_size_list)
+        probability = tf.nn.softmax(back_event)[:, :, 1]
 
     timestamps = timestamps / tf.reshape(duration, [-1, 1])
-    probability = tf.nn.softmax(back_event)[:, :, 1]
 
     if mode == "infer":
         # Prediction
@@ -232,7 +236,7 @@ class Model(interface.NMTModel):
             hidden_size=256,
             filter_size=512,
             num_heads=8,
-            num_mab=0,
+            num_mab=1,
             # regularization
             ratio=0.5,
             feature_dropout=0.1,

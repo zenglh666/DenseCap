@@ -3,7 +3,31 @@
 
 import math
 import tensorflow as tf
-     
+def layer_norm(inputs, epsilon=1e-6, dtype=None, scope=None):
+    """
+    Layer Normalization
+    :param inputs: A Tensor of shape [..., channel_size]
+    :param epsilon: A floating number
+    :param dtype: An optional instance of tf.DType
+    :param scope: An optional string
+    :returns: A Tensor with the same shape as inputs
+    """
+    with tf.variable_scope(scope, default_name="layer_norm", values=[inputs],
+                           dtype=dtype):
+        channel_size = inputs.get_shape().as_list()[-1]
+
+        scale = tf.get_variable("scale", shape=[channel_size],
+                                initializer=tf.ones_initializer())
+
+        offset = tf.get_variable("offset", shape=[channel_size],
+                                 initializer=tf.zeros_initializer())
+
+        mean = tf.reduce_mean(inputs, -1, True)
+        variance = tf.reduce_mean(tf.square(inputs - mean), -1, True)
+
+        norm_inputs = (inputs - mean) * tf.rsqrt(variance + epsilon)
+
+        return norm_inputs * scale + offset
 
 def linear(inputs, output_size, bias, concat=True, dtype=None, scope=None):
     """
