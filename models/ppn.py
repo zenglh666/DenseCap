@@ -2,90 +2,14 @@ import copy
 import tensorflow as tf
 import interface
 from utils import *
-from attention import *
-
-def layer_process(x, mode):
-    if not mode or mode == "none":
-        return x
-    elif mode == "layer_norm":
-        return layer_norm(x)
-    else:
-        raise ValueError("Unknown mode %s" % mode)
-
-
-def residual_fn(x, y, dropout):
-    y = tf.layers.dropout(y, dropout)
-    return x + y
+from .mab import *
 
 def conv_block(x, params, kernel_size, strides):
     x = tf.layers.conv1d(x, params.hidden_size, 
         kernel_size=kernel_size, strides=strides, padding='same', use_bias=False)
-    x = layer_process(x, params.layer_postprocess)
+    x = layer_process(x, params.layer_convprocess)
     x = tf.nn.relu(x)
     return x
-
-def MAB(visual, language, bias, params, scope=None):
-    with tf.variable_scope(scope, default_name="mab"):
-        for layer in range(params.num_mab):
-            with tf.variable_scope("layer_%d" % layer):
-                x = language
-
-                with tf.variable_scope("self_attention_language"):
-                    y = multihead_attention(
-                        layer_process(x, params.layer_preprocess),
-                        None,
-                        bias,
-                        params.num_heads,
-                        params.hidden_size,
-                        params.hidden_size,
-                        params.hidden_size,
-                        params.attention_dropout
-                    )
-                    y = y["outputs"]
-                    x = residual_fn(x, y, params.residual_dropout)
-                    x = layer_process(x, params.layer_postprocess)
-                        
-                with tf.variable_scope("feed_forward_language"):
-                    y = ffn_layer(
-                        layer_process(x, params.layer_preprocess),
-                        params.filter_size,
-                        params.hidden_size,
-                        params.relu_dropout,
-                    )
-                    x = residual_fn(x, y, params.residual_dropout)
-                    x = layer_process(x, params.layer_postprocess)
-
-                language = x
-
-                x = visual
-                
-                with tf.variable_scope("multi_attention_visual"):
-                    y = multihead_attention(
-                        layer_process(x, params.layer_preprocess),
-                        language,
-                        bias,
-                        params.num_heads,
-                        params.hidden_size,
-                        params.hidden_size,
-                        params.hidden_size,
-                        params.attention_dropout
-                    )
-                    y = y["outputs"]
-                    x = residual_fn(x, y, params.residual_dropout)
-                    x = layer_process(x, params.layer_postprocess)
-
-                with tf.variable_scope("feed_forward_visual"):
-                    y = ffn_layer(
-                        layer_process(x, params.layer_preprocess),
-                        params.filter_size,
-                        params.hidden_size,
-                        params.relu_dropout,
-                    )
-                    x = residual_fn(x, y, params.residual_dropout)
-                    x = layer_process(x, params.layer_postprocess)
-
-                visual = x
-        return x
 
 
 def model_graph(features, mode, params):
@@ -125,11 +49,7 @@ def model_graph(features, mode, params):
         for layer_id in range(params.anchor_layers):
             with tf.variable_scope("layer_%d" % layer_id):
                 with tf.variable_scope("input_feed_forward"):
-                    x = forward 
                     x = conv_block(x, params, kernel_size=3, strides=2)
-                    x = tf.layers.dropout(x, params.relu_dropout)
-                    forward = x
-                    x = conv_block(x, params, kernel_size=3, strides=1)
                     x = tf.layers.dropout(x, params.relu_dropout)
                     outputs_d_list.append(x)
                     outputs_d_size_list.append(tf.shape(x)[1])
@@ -143,6 +63,7 @@ def model_graph(features, mode, params):
             memories_tile = tf.tile(memories, [1, tf.shape(x)[1], 1])
             x = tf.concat([x, memories_tile], axis=-1)
             x = conv_block(x, params, kernel_size=1, strides=1)
+            x = tf.layers.dropout(x, params.relu_dropout)
             output = x
         else:
             output = MAB(output_d, feature_language, enc_attn_bias, params)
@@ -234,7 +155,7 @@ class Model(interface.NMTModel):
             anchor_layers=10,
             anchor=[1., 1.25, 1.5],
             hidden_size=256,
-            filter_size=512,
+            filter_size=256,
             num_heads=8,
             num_mab=1,
             # regularization
@@ -247,6 +168,9 @@ class Model(interface.NMTModel):
             relu_dropout=0.1,
             layer_preprocess="none",
             layer_postprocess="layer_norm",
+            layer_convprocess="layer_norm",
+            #optimizer="Adam",
+            #learning_rate=0.001,
         )
 
         return params

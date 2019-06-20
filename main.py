@@ -43,7 +43,7 @@ def default_parameters():
         job_id = "",
         log_id= "",
         # Default training hyper parameters
-        pre_fetch=32,
+        pre_fetch=4,
         buffer_size=1024,
         batch_size=32,
         gpu=0,
@@ -227,7 +227,7 @@ def main(args):
     )
 
     log = logging.getLogger('tensorflow')
-    formatter = logging.Formatter('%(asctime)s - %(name)s:%(message)s')
+    formatter = logging.Formatter('%(asctime)s - %(filename)s - %(lineno)s: %(message)s')
     fh = logging.FileHandler(os.path.join(params.output, params.log_id + '.log'))
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
@@ -304,7 +304,7 @@ def main(args):
                 tf.summary.scalar(k, v)
 
         # Add hooks
-        saver = tf.train.Saver()
+        saver = tf.train.Saver(max_to_keep=1)
         train_hooks = [
             tf.train.StopAtStepHook(last_step=params.train_steps),
             tf.train.NanTensorHook(loss),
@@ -323,7 +323,7 @@ def main(args):
 
         # Create session, do not use default CheckpointSaverHook
         with tf.train.MonitoredTrainingSession(
-                checkpoint_dir=params.output, hooks=train_hooks,
+                checkpoint_dir=params.output, hooks=train_hooks, log_step_count_steps=None,
                 save_checkpoint_secs=None, save_checkpoint_steps=None, 
                 save_summaries_secs=None, save_summaries_steps=None,
                 config=config) as sess:

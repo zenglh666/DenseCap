@@ -55,13 +55,14 @@ class ProposalEvaluationHook(tf.train.SessionRunHook):
             scores[k] /= self.val_num
             self._max_scores[k] = max(scores[k], self._max_scores[k])
 
-        log_str = "Total Proposal: %d" % self.val_num
-        log_str += " \nValidating ACC: "
+        tf.logging.info("Total Proposal: %d" % self.val_num)
+        log_str = " Validating ACC: "
         for (k, v) in sorted(scores.items()):
-            log_str += str(k) + " - " + str(v)
-        log_str += " \nMaximum ACC: "
+            log_str += str(k) + " - " + str(v) + " || "
+        tf.logging.info(log_str)
+        log_str = " Maximum ACC: "
         for (k, v) in sorted(self._max_scores.items()):
-            log_str += str(k) + " - " + str(v) + " ||||| "
+            log_str += str(k) + " - " + str(v) + " || "
         tf.logging.info(log_str)
 
 
