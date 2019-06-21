@@ -13,24 +13,19 @@ def conv_block(x, params, kernel_size, strides):
 
 
 def model_graph(features, mode, params):
-    feature_visual = features["feature_visual"]
+    feature_visual = features["feature_visual"][:,:,:50]
     feature_language = features["feature_language"]
     timestamps = features["timestamps"]
     duration = features['duration']
     language_length = features["language_length"]
-
-    if params.feature_dropout:
-        keep_prob = 1.0 - params.feature_dropout
-        distribution = tf.distributions.Bernoulli(probs=keep_prob)
-        feature_mask = tf.expand_dims(distribution.sample(tf.shape(feature_visual)[:-1]), axis=-1)
-        feature_visual = feature_visual * tf.cast(feature_mask, tf.float32)
-    if params.label_dropout:
-        keep_prob = 1.0 - params.label_dropout
-        distribution = tf.distributions.Bernoulli(probs=keep_prob)
-        feature_mask = tf.expand_dims(distribution.sample(tf.shape(feature_language)[:-1]), axis=-1)
-        feature_language = feature_language * tf.cast(feature_mask, tf.float32)
+    if mode == "eval":
+        params.feature_dropout = 0.
+        params.relu_dropout = 0.
+        params.attention_dropout = 0.
+        params.residual_dropout = 0.
 
     with tf.variable_scope("word_embedding"):
+        feature_language = tf.layers.dropout(feature_language, params.feature_dropout)
         src_mask = tf.sequence_mask(
             language_length, maxlen=tf.shape(feature_language)[1], dtype=tf.float32)
         feature_language = conv_block(feature_language, params, kernel_size=1, strides=1)
@@ -40,20 +35,17 @@ def model_graph(features, mode, params):
         feature_language = feature_language * tf.expand_dims(src_mask, -1)
 
     with tf.variable_scope("visual_embedding"):
+        feature_visual = tf.layers.dropout(feature_visual, params.feature_dropout)
         feature_visual = conv_block(feature_visual, params, kernel_size=1, strides=1)
         feature_visual = tf.layers.dropout(feature_visual, params.relu_dropout)
         feature_visual = add_timing_signal(feature_visual)
         outputs_d_list = []
         outputs_d_size_list = []
-        forward = x = feature_visual
+        x = feature_visual
         for layer_id in range(params.anchor_layers):
             with tf.variable_scope("layer_%d" % layer_id):
                 with tf.variable_scope("input_feed_forward"):
-                    x = forward
                     x = conv_block(x, params, kernel_size=3, strides=2)
-                    x = tf.layers.dropout(x, params.relu_dropout)
-                    forward = x
-                    x = conv_block(x, params, kernel_size=3, strides=1)
                     x = tf.layers.dropout(x, params.relu_dropout)
                     outputs_d_list.append(x)
                     outputs_d_size_list.append(tf.shape(x)[1])
@@ -165,7 +157,6 @@ class Model(interface.NMTModel):
             # regularization
             ratio=0.5,
             feature_dropout=0.1,
-            label_dropout=0.1,
             eucloss_ratio=10.,
             attention_dropout=0.1,
             residual_dropout=0.1,

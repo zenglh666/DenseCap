@@ -108,7 +108,7 @@ class Dataset(object):
             features["video"].set_shape(tf.TensorShape([None]))
             features["duration"].set_shape(tf.TensorShape([None]))
             features["timestamps"].set_shape(tf.TensorShape([None, 2]))
-            features["feature_visual"].set_shape(tf.TensorShape([None, None, self.params.visual_size]))
+            features["feature_visual"].set_shape(tf.TensorShape([None, self.params.k2scale, self.params.visual_size]))
             features["feature_language"].set_shape(tf.TensorShape([None, None, self.params.language_size]))
             features["sentences"].set_shape(tf.TensorShape([None]))
             features["language_length"].set_shape(tf.TensorShape([None]))
