@@ -173,8 +173,8 @@ class Model(interface.NMTModel):
             layer_preprocess="none",
             layer_postprocess="layer_norm",
             layer_convprocess="layer_norm",
-            #optimizer="Adam",
-            #learning_rate=0.001,
+            optimizer="Mom",
+            learning_rate=0.01,
         )
 
         return params

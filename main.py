@@ -185,7 +185,7 @@ def get_optimizer(learning_rate, params):
     elif params.optimizer == "LazyAdam":
         opt = tf.contrib.opt.LazyAdamOptimizer(learning_rate)
     elif params.optimizer == "Mom":
-        opt = tf.train.MomentumOptimizer(learning_rate, 0.9)
+        opt = tf.train.MomentumOptimizer(learning_rate, 0.9, use_nesterov=True)
     elif params.optimizer == "Sgd":
         opt = tf.train.GradientDescentOptimizer(learning_rate)
     else:
@@ -227,7 +227,7 @@ def main(args):
     )
 
     log = logging.getLogger('tensorflow')
-    formatter = logging.Formatter('%(asctime)s - %(filename)s - %(lineno)s: %(message)s')
+    formatter = logging.Formatter('%(asctime)s: %(message)s')
     fh = logging.FileHandler(os.path.join(params.output, params.log_id + '.log'))
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
