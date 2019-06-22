@@ -13,7 +13,7 @@ def conv_block(x, params, kernel_size, strides):
 
 
 def model_graph(features, mode, params):
-    feature_visual = features["feature_visual"][:,:,:50]
+    feature_visual = features["feature_visual"]
     feature_language = features["feature_language"]
     timestamps = features["timestamps"]
     duration = features['duration']
@@ -80,12 +80,12 @@ def model_graph(features, mode, params):
     with tf.variable_scope("loss"):
         acc = get_acc(params, proposal, probability, timestamps)
         loss_dict = {}
-        loss_dict['eucloss'] = regress_loss(
-            params, proposal, timestamps) * params.eucloss_ratio
-        loss = loss_dict['eucloss']
-        loss_dict['crossloss_plus'], loss_dict['crossloss_minus'] = class_loss(
+        loss_dict['regressloss'] = regress_loss(
+            params, proposal, timestamps) * params.regress_ratio
+        loss = loss_dict['regressloss']
+        loss_dict['classloss_plus'], loss_dict['classloss_minus'] = class_loss(
             params, proposal, timestamps, back_event)
-        loss += loss_dict['crossloss_plus'] + loss_dict['crossloss_minus']
+        loss += loss_dict['classloss_plus'] + loss_dict['classloss_minus']
 
         return loss, tf.reduce_mean(acc), loss_dict
 
@@ -157,7 +157,7 @@ class Model(interface.NMTModel):
             # regularization
             ratio=0.5,
             feature_dropout=0.1,
-            eucloss_ratio=10.,
+            regress_ratio=10.,
             attention_dropout=0.1,
             residual_dropout=0.1,
             relu_dropout=0.1,
