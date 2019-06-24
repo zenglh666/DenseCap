@@ -27,7 +27,7 @@ def main():
                 for f in sorted(os.listdir(temp_dir)):
                     temp_file = os.path.join(temp_dir, f)
                     temp_file_flow = os.path.join(temp_dir_flow, f)
-                    if os.path.isfile(temp_file):
+                    if os.path.isfile(temp_file) and os.path.isfile(temp_file_flow):
                         with open(temp_file, 'r') as file:
                             numbers = file.read().split(' ')
                         feature_rgb.append(numbers)
