@@ -40,14 +40,19 @@ class Dataset(object):
             for k in self.keys:
                 if self.labels[k]["subset"] == stage:
                     for idx in range(len(self.labels[k]["timestamps"])):
-                        used_labels.append([k, idx, self.labels[k]["duration"], 
+                        if "didemo" in self.params.label_file:
+                            lf_id = idx // 4
+                        else:
+                            lf_id =  idx
+                        used_labels.append([k, lf_id, self.labels[k]["duration"], 
                             self.labels[k]["timestamps"][idx], self.labels[k]["sentences"][idx]])
 
             if stage == "validation":
                 self.val_label_num = len(used_labels)
 
             dataset = tf.data.Dataset.range(len(used_labels))
-            shuffle(used_labels)
+            if stage == "train":
+                shuffle(used_labels)
 
             dataset = dataset.map(
                 lambda ind: tf.py_func(
@@ -82,7 +87,7 @@ class Dataset(object):
                 ),
             )
 
-            dataset = dataset.cache()
+            #dataset = dataset.cache()
             dataset = dataset.repeat()
             if stage == "train":
                 dataset = dataset.shuffle(self.params.buffer_size)

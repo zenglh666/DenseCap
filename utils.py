@@ -84,6 +84,9 @@ def get_acc_top1_top5(params, proposal, probability, timestamps):
         acc15 = tf.cast(tf.greater(top1, 0.5), tf.float32)
         acc17 = tf.cast(tf.greater(top1, 0.7), tf.float32)
 
+        mIoU = tf.cast(tf.cast((top_proposal * 6.), tf.int32), tf.float32) / 6.
+        mIoU = tIoU(mIoU, timestamps)
+
         stop = lambda probability, proposal, top_proposal: tf.less(tf.shape(top_proposal)[1], 6)
         _, _, top_proposal = tf.while_loop(stop, nms, 
             [probability, proposal, tf.zeros([tf.shape(proposal)[0], 1, 2])], 
@@ -98,7 +101,7 @@ def get_acc_top1_top5(params, proposal, probability, timestamps):
         acc57 = tf.reduce_max(shoot, axis=1)
 
         acc_dict = {"acc_R1_t0.5":acc15, "acc_R1_t0.7":acc17, 
-            "acc_R5_t0.5":acc55, "acc_R5_t0.7":acc57}
+            "acc_R5_t0.5":acc55, "acc_R5_t0.7":acc57, "mIoU":top1}
 
         return acc_dict
 

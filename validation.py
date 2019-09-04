@@ -49,7 +49,13 @@ class ProposalEvaluationHook(tf.train.SessionRunHook):
                     scores_iter[k] = scores_iter[k][:last_batch]
 
             for k in scores_iter.keys():
-                scores[k] += scores_iter[k].sum()
+                if "didemo" in self._params.label_file:
+                    scores_iter_k = scores_iter[k]
+                    scores_iter_k = np.reshape(scores_iter_k, [scores_iter_k.shape[0]//4, 4])
+                    scores_iter_k = np.sort(scores_iter_k, axis=1)[:, -3:]
+                    scores[k] += np.array(scores_iter_k).sum() / 3. * 4.
+                else:
+                    scores[k] += scores_iter[k].sum()
 
         for k in scores_iter.keys():
             scores[k] /= self.val_num

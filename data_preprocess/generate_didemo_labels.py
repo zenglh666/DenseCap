@@ -20,8 +20,10 @@ def generate_proposal(caption_json, dataset):
         proposal = {}
         proposal["duration"] = 30.
         proposal["subset"] = dataset
-        proposal["timestamps"] = [[float(value["times"][0][0]) * 5., float(value["times"][0][1] + 1) * 5.]]
-        proposal["sentences"] = [value["description"]]
+        proposal["timestamps"] = []
+        for ti in value["times"][:4]:
+            proposal["timestamps"].append([float(ti[0]) * 5., float(ti[1] + 1) * 5.])
+        proposal["sentences"] = [value["description"]] * len(proposal["timestamps"])
         key = value["video"]
 
         if key not in propsoal_json:
@@ -36,9 +38,9 @@ def main():
         with open(os.path.join(caption_dir, caption_train_file),'r',encoding='utf-8') as caption:
             merge_train = generate_proposal(caption, 'train')
         with open(os.path.join(caption_dir, caption_val_file),'r',encoding='utf-8') as caption:
-            merge_val = generate_proposal(caption, 'validation')
+            merge_val = generate_proposal(caption, 'train')
         with open(os.path.join(caption_dir, caption_test_file),'r',encoding='utf-8') as caption:
-            merge_test = generate_proposal(caption, 'test')
+            merge_test = generate_proposal(caption, 'validation')
         for k in merge_val.keys():
             if k in merge_train.keys():
                 raise ValueError("two dataset")
