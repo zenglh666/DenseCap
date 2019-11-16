@@ -40,7 +40,7 @@ def get_proposal(params, inputs, inputs_size_list):
             miu_c = tf.concat(miu_c_list, axis=1)
 
         fan_c = miu_c +  miu_w * tf.tanh(0.1 * localization[:, :, :, 0])
-        fan_w = miu_w * (tf.sigmoid(0.1 * localization[:, :, :, 1]))
+        fan_w = miu_w * (tf.sigmoid(0.1 * localization[:, :, :, 1]) * 0.5 + 0.5)
         t_start = tf.expand_dims(fan_c - 0.5 * fan_w, -1)
         t_end = tf.expand_dims(fan_c + 0.5 * fan_w, -1)
         proposal = tf.concat([t_start, t_end], axis=-1)

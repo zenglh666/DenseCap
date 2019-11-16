@@ -1,4 +1,5 @@
 import models.ppn
+import models.ppnv2
 import models.man
 
 def get_model(name, lrp=False):
@@ -6,6 +7,8 @@ def get_model(name, lrp=False):
 
     if name == "ppn":
         return models.ppn.Model
+    if name == "ppnv2":
+        return models.ppnv2.Model
     elif name == "man":
         return models.man.Model
     else:

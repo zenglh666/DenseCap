@@ -61,7 +61,7 @@ def default_parameters():
         initializer="uniform_unit_scaling",
         initializer_gain=1.0,
         scale_l1=0.0,
-        scale_l2=1e-4,
+        scale_l2=0.0,
         keep_checkpoint_max=1,
         keep_top_checkpoint_max=1,
         
