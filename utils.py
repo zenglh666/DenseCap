@@ -22,7 +22,7 @@ def get_proposal(params, inputs, inputs_size_list):
     with tf.variable_scope("proposal"):
         rd = tf.constant(params.anchor)
         size_rd = rd.get_shape().as_list()[0]
-        localization = tf.layers.conv1d(inputs, size_rd * 2, kernel_size=1, padding='same', use_bias=False)
+        localization = tf.layers.conv1d(inputs, size_rd * 2, kernel_size=1, padding='same', use_bias=True)
         localization = tf.reshape(localization, [batch_size, stream_length, size_rd, 2])
 
         with tf.device('/cpu:0'):
@@ -47,7 +47,7 @@ def get_proposal(params, inputs, inputs_size_list):
         proposal = tf.reshape(proposal, [batch_size, stream_length*size_rd, 2])
 
     with tf.variable_scope("back_event"):
-        back_event = tf.layers.conv1d(inputs, size_rd * 2, kernel_size=1, padding='same', use_bias=False)
+        back_event = tf.layers.conv1d(inputs, size_rd * 2, kernel_size=1, padding='same', use_bias=True)
         back_event = tf.reshape(back_event, [batch_size, stream_length*size_rd, 2])
 
     return back_event, proposal

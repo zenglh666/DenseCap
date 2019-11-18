@@ -58,7 +58,7 @@ def default_parameters():
         eval_secs=0,
         
         # Initializer and Regularizer 
-        initializer="uniform_unit_scaling",
+        initializer="normal_unit_scaling",
         initializer_gain=1.0,
         scale_l1=0.0,
         scale_l2=0.0,
