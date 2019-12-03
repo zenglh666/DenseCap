@@ -43,7 +43,8 @@ def model_graph(features, mode, params):
         outputs_d_size_list = []
         x = feature_visual
         for layer_id in range(params.anchor_layers):
-            x = tf.layers.average_pooling1d(x, pool_size=2, strides=2)
+            x = conv_block(x, params, kernel_size=3, strides=2)
+            x = tf.layers.dropout(x, params.relu_dropout)
             outputs_d_list.append(x)
             outputs_d_size_list.append(tf.shape(x)[1])
 

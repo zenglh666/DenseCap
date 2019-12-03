@@ -6,8 +6,8 @@ import sys
 import os 
 import math
 
-input_file = '/home/zenglh/activitynet/activitynet_caption.json'
-output_file = '/home/zenglh/activitynet/activitynet_sentences_line.txt'
+input_file = '/home/zenglh/activitynet/activitynet_caption2.json'
+output_file = '/home/zenglh/activitynet/activitynet_sentences_line2.txt'
 
 
 def main():

@@ -19,6 +19,7 @@ def MAB(visual, language, bias, params, scope=None):
         for layer in range(params.num_mab):
             with tf.variable_scope("layer_%d" % layer):
                 x = language
+
                 with tf.variable_scope("self_attention_language"):
                     y = multihead_attention(
                         layer_process(x, params.layer_preprocess),
@@ -92,7 +93,7 @@ def MAB(visual, language, bias, params, scope=None):
                     y = y["outputs"]
                     x = residual_fn(x, y, params.residual_dropout)
                     x = layer_process(x, params.layer_postprocess)
-
+                
                 with tf.variable_scope("feed_forward_visual"):
                     y = ffn_layer(
                         layer_process(x, params.layer_preprocess),

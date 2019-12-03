@@ -5,9 +5,9 @@ import numpy as np
 import sys
 from io import StringIO
 
-label_file = '/home/zenglh/activitynet/activitynet_caption.json'
-feature_file = '/home/zenglh/activitynet/activitynet_sentences_line.jsonl'
-output_file = '/home/zenglh/activitynet/activitynet_bert.hdf5'
+label_file = '/home/zenglh/activitynet/activitynet_caption2.json'
+feature_file = '/home/zenglh/activitynet/activitynet_sentences_line2.jsonl'
+output_file = '/home/zenglh/activitynet/activitynet_bert2.hdf5'
 
 def list_features(feature):
     syntaxes = feature['features']

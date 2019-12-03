@@ -9,9 +9,9 @@ import math
 caption_dir = '/home/zenglh/activitynet/captions'
 caption_train_file = 'train.json'
 caption_train_id_file = 'train_ids.json'
-caption_val_file = 'val_1.json'
+caption_val_file = 'val_2.json'
 caption_val_id_file = 'val_ids.json'
-output_file = 'activitynet_caption.json'
+output_file = 'activitynet_caption2.json'
 
 
 def generate_proposal(caption_json, dataset):
