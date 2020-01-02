@@ -15,6 +15,19 @@ def tIoU(proposal, timestamps):
         
         return tf.stop_gradient(tiou)
 
+def tIoUv2(proposal, timestamps):
+    with tf.variable_scope("tiou"):
+        proposal_start = tf.expand_dims(proposal[:, :, 0], 1)
+        proposal_end = tf.expand_dims(proposal[:, :, 1], 1)
+        timestamps_start = tf.expand_dims(timestamps[:, :, 0], -1)
+        timestamps_end = tf.expand_dims(timestamps[:, :, 1], -1)
+        intersection = tf.maximum(
+            0., tf.minimum(proposal_end, timestamps_end) - tf.maximum(proposal_start, timestamps_start))
+        union = proposal_end - proposal_start + timestamps_end - timestamps_start - intersection
+        tiou = intersection / (union + 1e-8)
+        
+        return tf.stop_gradient(tiou)
+
 def get_proposal(params, inputs, inputs_size_list):
     batch_size = tf.shape(inputs)[0]
     stream_length = tf.shape(inputs)[1]
@@ -86,6 +99,52 @@ def get_proposalv2(params, inputs, inputs_size_list):
     with tf.variable_scope("back_event"):
         back_event = tf.layers.conv1d(inputs, size_rd * 2, kernel_size=1, padding='same', use_bias=False)
         back_event = tf.reshape(back_event, [batch_size, stream_length*size_rd, 2])
+
+    return back_event, proposal
+
+def get_proposalv3(params, inputs, inputs_size_list):
+    batch_size = tf.shape(inputs)[0]
+    stream_length = tf.shape(inputs)[1]
+
+    with tf.variable_scope("proposal"):
+        rd = tf.constant(params.anchor)
+        size_rd = rd.get_shape().as_list()[0]
+        localization = tf.layers.conv1d(inputs, size_rd * 2, kernel_size=1, padding='same', use_bias=False)
+        localization = tf.reshape(localization, [batch_size, stream_length, size_rd, 2])
+
+        with tf.device('/cpu:0'):
+            miu_w_list = []
+            miu_c_list = []
+            for size in inputs_size_list:
+                miu_w = rd / tf.cast(size, tf.float32)
+                miu_c = (tf.cast(tf.range(size), tf.float32) + 0.5)/ tf.cast(size, tf.float32)
+                miu_w = tf.reshape(miu_w, [1, 1, size_rd])
+                miu_w = tf.tile(miu_w, [1, size, 1])
+                miu_c = tf.reshape(miu_c, [1, size, 1])
+                miu_w_list.append(miu_w)
+                miu_c_list.append(miu_c)
+            miu_w = tf.concat(miu_w_list, axis=1)
+            miu_c = tf.concat(miu_c_list, axis=1)
+
+        fan_c = miu_c +  miu_w * tf.tanh(0.1 * localization[:, :, :, 0])
+        fan_w = miu_w * (tf.sigmoid(0.1 * localization[:, :, :, 1]) * 0.5 + 0.5)
+        t_start = tf.expand_dims(fan_c - 0.5 * fan_w, -1)
+        t_end = tf.expand_dims(fan_c + 0.5 * fan_w, -1)
+        proposal = tf.concat([t_start, t_end], axis=-1)
+        proposal = tf.reshape(proposal, [batch_size, stream_length*size_rd, 2])
+
+    with tf.variable_scope("back_event"):
+        back_event = tf.layers.conv1d(inputs, size_rd * 2, kernel_size=1, padding='same', use_bias=False)
+        back_event = tf.reshape(back_event, [batch_size, stream_length*size_rd, 2])
+
+    with tf.variable_scope("reranking"):
+        iou = tf.stop_gradient(tIoUv2(proposal, proposal))
+        # iou = tf.reshape(iou, [batch_size, (2 ** params.anchor_layers - 1)*size_rd, (2 ** params.anchor_layers - 1)*size_rd])
+        a = tf.get_variable('alpha', shape=[], initializer=tf.initializers.constant(params.alpha), trainable=False)
+        tf.add_to_collection('alpha', a)
+        # coff = tf.layers.conv1d(iou, (2 ** params.anchor_layers - 1)*size_rd, kernel_size=1, padding='same', use_bias=False)
+        coff = tf.nn.softmax(iou * a)
+        back_event = tf.transpose(tf.matmul(back_event, coff, transpose_a=True, transpose_b=True), perm=[0, 2, 1])
 
     return back_event, proposal
 
